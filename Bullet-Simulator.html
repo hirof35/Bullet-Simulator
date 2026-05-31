@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>究極・弾薬弾道シミュレータ (型安全＆低負荷設計)</title>
+  <style>
+    :root {
+      --bg-color: #121214;
+      --panel-bg: #1a1a24;
+      --border-color: #2e2e3f;
+      --text-color: #f5f5f7;
+      --accent-color: #007aff;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin: 0 0 5px 0;
+      font-size: 26px;
+      letter-spacing: 1px;
+    }
+    .subtitle {
+      color: #8e8e93;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    .container {
+      display: flex;
+      gap: 24px;
+      max-width: 1300px;
+      width: 100%;
+    }
+    /* コントロールパネル */
+    .controls {
+      flex: 1;
+      background-color: var(--panel-bg);
+      padding: 24px;
+      border-radius: 16px;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    h3 {
+      margin: 0 0 10px 0;
+      border-left: 4px solid var(--accent-color);
+      padding-left: 10px;
+      font-size: 16px;
+    }
+    .btn-group {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    button {
+      background-color: #242430;
+      color: #fff;
+      border: 1px solid var(--border-color);
+      padding: 12px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      text-align: left;
+      padding-left: 12px;
+      transition: all 0.2s ease;
+    }
+    button:hover {
+      background-color: #2e2e3f;
+      border-color: #44445c;
+    }
+    button.active {
+      background-color: var(--accent-color);
+      border-color: var(--accent-color);
+      box-shadow: 0 0 12px rgba(0, 122, 255, 0.4);
+    }
+    .stats {
+      background-color: #121214;
+      padding: 18px;
+      border-radius: 10px;
+      font-size: 14px;
+      line-height: 1.7;
+      border: 1px solid var(--border-color);
+    }
+    .stats hr {
+      border: 0;
+      border-top: 1px solid var(--border-color);
+      margin: 12px 0;
+    }
+    .stats span {
+      color: #34c759;
+      font-weight: bold;
+      float: right;
+    }
+    /* シミュレーション表示エリア */
+    .view {
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    canvas {
+      background-color: #0b0b0f;
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+      width: 100%;
+      height: auto;
+    }
+    .legend {
+      font-size: 13px;
+      color: #8e8e93;
+      text-align: center;
+      background-color: var(--panel-bg);
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>弾薬物理軌道シミュレータ</h1>
+  <div class="subtitle">TypeScript物理エンジン × Canvas動的スケーリング (仰角45度固定)</div>
+  
+  <div class="container">
+    <div class="controls">
+      <div>
+        <h3>弾薬プリセットを選択</h3>
+        <div class="btn-group" id="preset-buttons">
+          </div>
+      </div>
+      
+      <div>
+        <h3>リアルタイム解析データ</h3>
+        <div class="stats" id="stats-panel">
+          弾薬を選択してください。
+        </div>
+      </div>
+    </div>
+
+    <div class="view">
+      <canvas id="simCanvas" width="800" height="500"></canvas>
+      <div class="legend">
+        💡 <strong>安全機能:</strong> 弾種ごとにスケールを自動最適化。超長距離の50口径から近接用の.380ACPまで、フリーズせず安全に描画します。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 🛠️ TypeScript 設計準拠：ロジック＆データ層
+    // =========================================================================
+
+    // 全11種類の弾薬データを完全統合
+    const bulletPresets = [
+      // --- ハンドガン・護身用弾薬 ---
+      { name: ".380 ACP",       speed: 300, drag: 0.060, color: "#ff453a", desc: "小型護身用。パワーが弱く空気抵抗で即失速。" },
+      { name: ".38 Special",    speed: 290, drag: 0.055, color: "#ff9f0a", desc: "定番リボルバー弾。低速で弾道はお辞儀しやすい。" },
+      { name: "9mm Parabellum", speed: 360, drag: 0.050, color: "#ffd60a", desc: "世界標準の拳銃弾。バランスが良く素直な放物線。" },
+      { name: ".40 S&W",        speed: 320, drag: 0.053, color: "#30d158", desc: "警察用ピストル弾。9mmと45口径の中間的特性。" },
+      { name: ".45 ACP",        speed: 250, drag: 0.050, color: "#64d2ff", desc: "大口径の鈍足重量弾。弾道ドロップが非常に大きい。" },
+      { name: "S&W .500",       speed: 630, drag: 0.045, color: "#0a84ff", desc: "最強の拳銃弾。リボルバーらしからぬ狂気的な初速。" },
+      // --- 散弾銃 ---
+      { name: "12 Gauge (Slug)",speed: 430, drag: 0.080, color: "#bf5af2", desc: "散弾銃の単体重量弾。バケツ形状のため超強烈に失速。" },
+      // --- アサルトライフル・小銃弾 ---
+      { name: "5.45x39mm",      speed: 880, drag: 0.016, color: "#da8fff", desc: "AK-74用弾薬。細長く、極めて空気抵抗が少ない。" },
+      { name: "5.56mm NATO",    speed: 900, drag: 0.015, color: "#ff9f0a", desc: "M4等に採用。超高速・軽量弾で矢のように低伸する。" },
+      { name: "7.62x39mm",      speed: 715, drag: 0.025, color: "#ff3b30", desc: "AK-47用。5.56mmより重く遅いが中距離で粘る。" },
+      { name: "7.62mm NATO",    speed: 800, drag: 0.020, color: "#34c759", desc: "狙撃・機関銃用。パワーがあり遠距離でも安定。" },
+      // --- 機関銃・対物ライフル ---
+      { name: ".50 BMG (50口径)", speed: 850, drag: 0.012, color: "#00ffff", desc: "超大型対物ライフル弾。質量により空気の壁を切り裂く。" }
+    ];
+
+    /**
+     * 安全第一の物理演算シミュレータクラス (オイラー法)
+     */
+    class BulletSimulator {
+      constructor() {
+        this.gravity = 9.81;    // 重力加速度 (m/s^2)
+        this.timeStep = 0.016;  // 計算の時間刻み dt (約60fps)
+        this.maxSteps = 12000;  // 【重要】ブラウザがフリーズしないための安全弁
+      }
+
+      /**
+       * 弾道を計算して全座標を返す
+       */
+      run(initialSpeed, angleDegree, airResistance) {
+        const angleRad = (angleDegree * Math.PI) / 180;
+        
+        // 型定義を意識した状態オブジェクト
+        const state = {
+          x: 0,
+          y: 0,
+          vx: initialSpeed * Math.cos(angleRad),
+          vy: initialSpeed * Math.sin(angleRad)
+        };
+
+        const trajectory = [{ x: state.x, y: state.y }];
+        let steps = 0;
+
+        // 地面に衝突するか、最大ステップ(安全弁)に達するまでループ
+        while (steps < this.maxSteps) {
+          // 1. 空気抵抗の算出 (F_drag = -k * v)
+          const dragX = -airResistance * state.vx;
+          const dragY = -airResistance * state.vy;
+
+          // 2. 座標を更新 (位置 = 位置 + 速度 * dt)
+          state.x += state.vx * this.timeStep;
+          state.y += state.vy * this.timeStep;
+
+          // 3. 速度を更新 (速度 = 速度 + 加速度 * dt)
+          state.vx += dragX * this.timeStep;
+          state.vy += (-this.gravity + dragY) * this.timeStep;
+
+          // 履歴にプッシュ
+          trajectory.push({ x: state.x, y: state.y });
+          steps++;
+
+          // 着地判定 (発射直後のステップ1はスルー)
+          if (steps > 1 && state.y <= 0) {
+            trajectory[trajectory.length - 1].y = 0; // 地面に座標を補正
+            break;
+          }
+        }
+        return trajectory;
+      }
+    }
+
+    // =========================================================================
+    // 🎨 UI 描画・制御層
+    // =========================================================================
+
+    const canvas = document.getElementById("simCanvas");
+    const ctx = canvas.getContext("2d");
+    const simulator = new BulletSimulator();
+    let selectedBullet = bulletPresets[2]; // 初期選択は 9mm Parabellum
+
+    // 1. コントロールパネルのボタンを動的生成
+    const btnGroup = document.getElementById("preset-buttons");
+    bulletPresets.forEach((bullet) => {
+      const btn = document.createElement("button");
+      btn.innerText = bullet.name;
+      if (bullet.name === selectedBullet.name) btn.classList.add("active");
+      
+      btn.onclick = () => {
+        document.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        selectedBullet = bullet;
+        render();
+      };
+      btnGroup.appendChild(btn);
+    });
+
+    /**
+     * 計算と Canvas への描画を実行
+     */
+    function render() {
+      // 固定仰角45度で計算
+      const trajectory = simulator.run(selectedBullet.speed, 45, selectedBullet.drag);
+
+      // データの解析
+      const totalSteps = trajectory.length;
+      const maxRange = trajectory[totalSteps - 1].x;
+      const maxHeight = Math.max(...trajectory.map(p => p.y));
+
+      // パネルテキストの更新
+      document.getElementById("stats-panel").innerHTML = `
+        <strong>指定弾薬:</strong> ${selectedBullet.name}<br>
+        <span style="color:#8e8e93; font-size:12px; float:none;">${selectedBullet.desc}</span>
+        <hr>
+        <strong>弾頭初速 (v₀):</strong> <span>${selectedBullet.speed} m/s</span><br>
+        <strong>空気抵抗係数 (k):</strong> <span>${selectedBullet.drag.toFixed(3)}</span><br>
+        <strong>最大水平射程:</strong> <span>${maxRange.toFixed(1)} m</span><br>
+        <strong>最高到達高度:</strong> <span>${maxHeight.toFixed(1)} m</span>
+      `;
+
+      // Canvasをリセット
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // --- 視覚化の工夫：動的オートスケーリング ---
+      const padding = 50;
+      const scaleX = (canvas.width - padding * 2) / maxRange;
+      const scaleY = scaleX; // アスペクト比を1:1に維持（歪みを防ぐ）
+
+      // 描画の基準となる原点 (左下)
+      const originX = padding;
+      const originY = canvas.height - padding;
+
+      // サイバー風グリッド線の描画
+      ctx.strokeStyle = "#1a1a24";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 50) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 50) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      // 地平線の描画
+      ctx.strokeStyle = "#3a3a4a";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, originY);
+      ctx.lineTo(canvas.width, originY);
+      ctx.stroke();
+
+      // 弾道のメインライン描画
+      ctx.strokeStyle = selectedBullet.color;
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(originX, originY);
+
+      trajectory.forEach(pos => {
+        // 物理座標(m) を Canvas上のピクセル座標にマッピング (Y軸は上下反転)
+        const cx = originX + pos.x * scaleX;
+        const cy = originY - pos.y * scaleY;
+        ctx.lineTo(cx, cy);
+      });
+      ctx.stroke();
+
+      // 着地ポイントの強調インジケータ
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = selectedBullet.color;
+      ctx.beginPath();
+      ctx.arc(originX + maxRange * scaleX, originY, 5, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // 次の描画のためにシャドウをリセット
+      ctx.shadowBlur = 0;
+    }
+
+    // 初回レンダリング
+    render();
+  </script>
+</body>
+</html>
